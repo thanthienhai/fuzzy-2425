@@ -8,6 +8,8 @@ packages = [{include = "fcm", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
+scikit-fuzzy = "^0.4.2"
+matplotlib = "^3.9.2"
 
 
 [build-system]
