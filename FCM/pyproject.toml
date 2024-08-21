@@ -10,6 +10,8 @@ packages = [{include = "fcm", from = "src"}]
 python = "^3.10"
 scikit-fuzzy = "^0.4.2"
 matplotlib = "^3.9.2"
+pandas = "^2.2.2"
+scikit-learn = "^1.5.1"
 
 
 [build-system]
