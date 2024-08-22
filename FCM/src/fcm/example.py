@@ -26,7 +26,7 @@ for i, ((xmu, ymu), (xsigma, ysigma)) in enumerate(zip(centers, sigmas)):
     ypts = np.hstack((ypts, np.random.standard_normal(200) * ysigma + ymu))
     labels = np.hstack((labels, np.ones(200) * i))
 
-save_path = '/home/thien/Coding/NCKH2425/fuzzy-2425/FCM/src/fcm/outputs'
+save_path = './FCM/src/fcm/outputs'
 filename = 'test_data_clusters.png'
 
 # Visualize the test data
