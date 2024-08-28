@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "fcm"
+version = "0.1.0"
+description = ""
+authors = ["Than Thien <thien2632003@gmail.com>"]
+readme = "README.md"
+packages = [{include = "fcm", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+scikit-fuzzy = "^0.4.2"
+matplotlib = "^3.9.2"
+pandas = "^2.2.2"
+scikit-learn = "^1.5.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
