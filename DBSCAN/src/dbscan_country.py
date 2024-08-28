@@ -9,10 +9,10 @@ import os
 from sklearn.neighbors import NearestNeighbors
 
 # Đọc dữ liệu
-df = pd.read_csv('/home/thien/Coding/NCKH2425/fuzzy-2425/datasets/csv/602_Dry_Bean.csv')
+df = pd.read_csv('/home/thien/Coding/NCKH2425/fuzzy-2425/datasets/Country-data.csv')
 
 # Chọn các features để phân cụm
-features = ['Area','Perimeter','MajorAxisLength','MinorAxisLength','AspectRation','Eccentricity','ConvexArea','EquivDiameter','Extent','Solidity','roundness','Compactness','ShapeFactor1','ShapeFactor2','ShapeFactor3','ShapeFactor4']
+features = ['child_mort', 'exports', 'health', 'imports', 'income', 'inflation', 'life_expec', 'total_fer', 'gdpp']
 X = df[features]
 
 # Chuẩn hóa dữ liệu
@@ -108,7 +108,7 @@ with open('results/cluster_summary.txt', 'w') as f:
             f.write(f"Cluster {cluster}:\n")
         cluster_data = df[df['Cluster'] == cluster]
         f.write(f"Number of countries: {len(cluster_data)}\n")
-        # f.write("Top 5 countries: " + ", ".join(cluster_data['Area'].head().tolist()) + "\n")
+        f.write("Top 5 countries: " + ", ".join(cluster_data['country'].head().tolist()) + "\n")
         f.write("Cluster statistics:\n")
         f.write(cluster_data[features].describe().to_string() + "\n\n")
 
