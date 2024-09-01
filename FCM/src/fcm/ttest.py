@@ -3,7 +3,7 @@ import numpy as np
 # Step 1: Make a membership of values of feature in matrix
 def initialize_membership_matrix(n_samples, n_clusters):
     U = np.random.rand(n_samples, n_clusters)
-    U = U / np.sum(U, axis=1, keepdims=True)  # Đảm bảo tổng các giá trị trên mỗi hàng là 1
+    U = U / np.sum(U, axis=1, keepdims=True)  
     return U
 
 # Step 2: Calculate each centroids
@@ -30,13 +30,13 @@ def update_membership_matrix(U, X, centroids, m):
 # Step 4: Connect all of them to build FCM
 def fuzzy_c_means(X, n_clusters, m=2, max_iter=100, error=1e-5):
     n_samples = X.shape[0]
-    U = initialize_membership_matrix(n_samples, n_clusters)  # Khởi tạo ngẫu nhiên
+    U = initialize_membership_matrix(n_samples, n_clusters)  
     
     for iteration in range(max_iter):
-        centroids = calculate_centroids(U, X, m)  # Tính toán các tâm cụm
-        U_new = update_membership_matrix(U, X, centroids, m)  # Cập nhật ma trận membership
+        centroids = calculate_centroids(U, X, m)  
+        U_new = update_membership_matrix(U, X, centroids, m)  
         
-        # Calculate the norm, U_new minus U, when it small than error then break of the process
+        # Calculate the norm, U_new minus U, when it smaller than error then break of the process
         if np.linalg.norm(U_new - U) < error:
             break
         
