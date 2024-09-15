@@ -36,7 +36,7 @@ cbar.set_label('Degree of Membership')
 
 # Hoàn thiện biểu đồ
 plt.title("Fuzzy C-Means Clustering with Dataset HELP")
-plt.xlabel("Ex")
-plt.ylabel("Im")
+plt.xlabel("Exports")
+plt.ylabel("Imports")
 plt.legend()
 plt.show()
