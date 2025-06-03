@@ -14,10 +14,76 @@ import os # For path joining
 from sklearn.cluster import DBSCAN
 
 # Global placeholders for custom metric functions
-# These will be populated by exec'ing files from the 'tools' directory
-def pci_index(X, U): return np.nan
-def fhv_index(X, U, V, m): return np.nan
-def xbi_index(X, U, V, m): return np.nan
+def pci_index(X, U):
+    """
+    Partition Coefficient Index (PCI)
+    Measures the fuzziness of the clustering
+    Range: [1/c, 1] where c is number of clusters
+    Higher values indicate better clustering
+    """
+    if U is None or U.shape[0] == 0 or U.shape[1] == 0:
+        return np.nan
+    return np.mean(np.sum(U**2, axis=1))
+
+def fhv_index(X, U, V, m):
+    """
+    Fuzzy Hypervolume (FHV)
+    Measures the volume of fuzzy clusters
+    Lower values indicate better clustering
+    """
+    if X is None or U is None or V is None or \
+       X.shape[0] == 0 or U.shape[0] == 0 or V.shape[0] == 0:
+        return np.nan
+    
+    n_clusters = V.shape[0]
+    fhv = 0
+    
+    for j in range(n_clusters):
+        # Calculate fuzzy covariance matrix for cluster j
+        diff = X - V[j]
+        weighted_diff = (U[:, j]**m).reshape(-1, 1) * diff
+        cov_j = np.dot(weighted_diff.T, diff) / np.sum(U[:, j]**m)
+        
+        # Calculate determinant of covariance matrix
+        try:
+            det = np.linalg.det(cov_j)
+            if det > 0:  # Only add if determinant is positive
+                fhv += np.sqrt(det)
+        except np.linalg.LinAlgError:
+            continue
+    
+    return fhv
+
+def xbi_index(X, U, V, m):
+    """
+    Xie-Beni Index (XBI)
+    Measures the ratio of compactness to separation
+    Lower values indicate better clustering
+    """
+    if X is None or U is None or V is None or \
+       X.shape[0] == 0 or U.shape[0] == 0 or V.shape[0] == 0:
+        return np.nan
+    
+    n_clusters = V.shape[0]
+    
+    # Calculate compactness (numerator)
+    compactness = 0
+    for j in range(n_clusters):
+        diff = X - V[j]
+        weighted_dist = np.sum((U[:, j]**m).reshape(-1, 1) * (diff**2))
+        compactness += weighted_dist
+    
+    # Calculate minimum separation between cluster centers (denominator)
+    min_sep = float('inf')
+    for i in range(n_clusters):
+        for j in range(i+1, n_clusters):
+            sep = np.sum((V[i] - V[j])**2)
+            min_sep = min(min_sep, sep)
+    
+    if min_sep == 0 or min_sep == float('inf'):
+        return np.nan
+        
+    return compactness / (X.shape[0] * min_sep)
 
 # --- Data Loading and Preprocessing ---
 def load_usps_data(base_path='.'):
@@ -86,6 +152,25 @@ def load_ecommerce_data(base_path='.'):
     X_scaled = scaler.fit_transform(data)
     return X_scaled
 
+def load_country_data(base_path='.'):
+    file_path = os.path.join(base_path, 'Country-data.csv')
+    try:
+        df = pd.read_csv(file_path)
+        print(f"Country data loaded successfully from {file_path}. Shape: {df.shape}")
+        
+        # Drop the 'country' column as it's not a feature
+        features = df.drop('country', axis=1)
+        
+        # Scale the features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(features)
+        return X_scaled, df['country']
+    except FileNotFoundError:
+        print(f"Error: Country data file '{file_path}' not found.")
+        return None, None
+    except Exception as e:
+        print(f"Error loading Country data from '{file_path}': {e}")
+        return None, None
 
 # --- Algorithm Implementations ---
 
@@ -483,7 +568,8 @@ def run_cfcm(data_input, n_clusters, beta=1.0, max_iter=30, tol=1e-4, random_sta
     initial_center_indices = np.random.choice(n_samples, n_clusters, replace=False)
     centers = data_input[initial_center_indices]
         
-    feature_weights = np.ones(n_features)  # Giả định |j_k^2| = 1 from the paper notation
+    # Reshape feature_weights to match data dimensions
+    feature_weights = np.ones(n_features).reshape(1, -1)  # Shape: (1, n_features)
     
     for iteration in range(max_iter):
         u_old = u.copy()
@@ -497,25 +583,6 @@ def run_cfcm(data_input, n_clusters, beta=1.0, max_iter=30, tol=1e-4, random_sta
         if denom_beta_P == 0: denom_beta_P = 1e-10 # Avoid division by zero
 
         for r_sample_idx in range(n_samples):
-            # Pre-calculate sum of (u_rk_old^2 * feature_weights_sum) for the regularization term denominator
-            # This is part of the formula (beta * sum_k(u_rk^2 * sum_j |w_jk|^2)) / (1 + beta(P-1))
-            # Assuming |w_jk|^2 is feature_weights[j] and constant across k for a given j.
-            # The term seems to be sum_k ( u_rk^2 * sum_j |w_jk|^2 ) from one interpretation of formula (6)
-            # The provided CFCM.py code uses: beta * np.sum(feature_weights * u[i, :] ** 2)
-            # which implies sum_j ( w_j^2 * u_ij^2 ) - a bit ambiguous from original script. Let's follow CFCM.py
-            # The original code had: reg_term = beta * np.sum(feature_weights * u[i, :] ** 2) / denom
-            # This sums over k (clusters) for u[i,k]^2. Let's assume u is u_old here.
-
-            # Recalculating reg_term as per original CFCM.py (using u_old for stability in iteration)
-            # reg_term_numerator = beta * np.sum(feature_weights * (u_old[r_sample_idx, :] ** 2))
-            # reg_term = reg_term_numerator / denom_beta_P
-            # The formula is actually for each u_rk, so the sum for reg_term must be over features, not clusters.
-            # The original paper for CFCM-WF would be clearer. Let's stick to the provided CFCM.py version carefully
-            # The term u[i,k] itself is being updated. Formula (6) shows u_rk. The summation in the second term of (6) is over j=1 to P (features).
-            # The summation in the third term of (6) is also over j=1 to P.
-            # The python code `beta * np.sum(feature_weights * u[i, :] ** 2)` sums over clusters `k` for `u[i,k]**2`.
-            # This seems to be a simplification or a different interpretation. Let's follow the user's code logic.
-
             for k_cluster_idx in range(n_clusters):
                 # Phần 1: (1 / sum_s (d_rk^2 / d_rs^2))
                 ratio_sum_dist = np.sum(distances[r_sample_idx, k_cluster_idx] / distances[r_sample_idx, :]) 
@@ -523,24 +590,13 @@ def run_cfcm(data_input, n_clusters, beta=1.0, max_iter=30, tol=1e-4, random_sta
                 term1_coeff = 1.0 / ratio_sum_dist
 
                 # Phần 2: 1 - beta * sum_j w_j^2 (u_rj^CFCM)^2 / (1+beta(P-1))
-                # User's CFCM.py code: reg_term = beta * np.sum(feature_weights * u[i, :] ** 2) / denom
-                # This uses u[i,:] which means sum over all clusters for sample i.
-                # For calculating u_new_iter[r_sample_idx, k_cluster_idx], the reg term should be stable.
-                # Let's use u_old for the reg_term calculation to match how u_old is used for convergence check.
-                
-                # The term (u_rj^CFCM)^2 is tricky. If j is feature index, u is (sample, cluster).
-                # The original CFCM.py: `beta * np.sum(feature_weights * u[i, :] ** 2) / denom`
-                # This sums over clusters `k` for `u[i,k]**2`. Let's try to replicate this for now.
-                # This implies the regularization term is constant for all k for a given sample i.
-                reg_term_num = beta * np.sum(feature_weights * (u_old[r_sample_idx, :] ** 2))
+                # Reshape u_old[r_sample_idx, :] to match feature_weights dimensions
+                u_old_row = u_old[r_sample_idx, :].reshape(1, -1)  # Shape: (1, n_clusters)
+                reg_term_num = beta * np.sum(feature_weights * (u_old_row ** 2))
                 reg_term = reg_term_num / denom_beta_P
                 term2_factor = 1.0 - reg_term
 
                 # Phần 3: beta * sum_j w_j^2 (u_rk^CFCM)^2 / (1+beta(P-1))
-                # User's CFCM.py code: `(beta * np.sum(feature_weights) * u[i, k] ** 2) / denom`
-                # Here u[i,k] is the element being updated. This requires solving a quadratic or iterative update.
-                # The original code uses u[i,k] on the RHS which is self-referential.
-                # Let's use u_old[r_sample_idx, k_cluster_idx] for stability during this iteration.
                 term3_num = beta * np.sum(feature_weights) * (u_old[r_sample_idx, k_cluster_idx] ** 2)
                 term3 = term3_num / denom_beta_P
                 
@@ -557,10 +613,9 @@ def run_cfcm(data_input, n_clusters, beta=1.0, max_iter=30, tol=1e-4, random_sta
         # Cập nhật tâm cụm v_rt
         centers_new = np.zeros((n_clusters, n_features))
         for k_cluster_idx_c in range(n_clusters):
-            u_k_col = u[:, k_cluster_idx_c].reshape(-1, 1)
-            numerator_c = np.sum(u_k_col * data_input, axis=0)
+            u_k_col = u[:, k_cluster_idx_c].reshape(-1, 1)  # Shape: (n_samples, 1)
+            numerator_c = np.sum(u_k_col * data_input, axis=0)  # Shape: (n_features,)
             # Denominator from paper for v_rt: sum_r u_rk + beta * sum_j w_j^2
-            # User's code: denominator = np.sum(u_k) + beta * np.sum(feature_weights)
             denominator_c = np.sum(u_k_col) + beta * np.sum(feature_weights)
             centers_new[k_cluster_idx_c] = numerator_c / max(denominator_c, 1e-10)
         centers = centers_new
@@ -813,6 +868,102 @@ def main():
     else:
         print("Skipping E-Commerce dataset processing due to loading error.")
 
+    # --- Country Data ---
+    print("\nProcessing Country Data...")
+    X_country, y_country = load_country_data(base_path)
+    
+    if X_country is not None:
+        country_n_clusters = 3
+        country_input_dim = X_country.shape[1]
+
+        print("\nRunning FDEKM on Country Data...")
+        try:
+            X_country_tensor = torch.tensor(X_country.copy(), dtype=torch.float32)
+            fdekm_labels_country, _, fdekm_metrics_country = run_fdekm(
+                X_country_tensor, X_country.copy(), k=country_n_clusters, Iter=3,
+                input_dim=country_input_dim, hidden_dim_ae=country_n_clusters, m=2.0, verbose=verbose_run
+            )
+            results.append({'dataset': 'Country', 'algorithm': 'FDEKM', **fdekm_metrics_country})
+            print("FDEKM on Country Data results:", fdekm_metrics_country)
+        except Exception as e:
+            print(f"Error running FDEKM on Country Data: {e}")
+            results.append({'dataset': 'Country', 'algorithm': 'FDEKM', 'error': str(e)})
+
+        print("\nRunning FCM on Country Data...")
+        try:
+            _, _, _, fcm_metrics_country = run_fcm(
+                X_country.copy(), n_clusters=country_n_clusters, verbose=verbose_run
+            )
+            results.append({'dataset': 'Country', 'algorithm': 'FCM', **fcm_metrics_country})
+            print("FCM on Country Data results:", fcm_metrics_country)
+        except Exception as e:
+            print(f"Error running FCM on Country Data: {e}")
+            results.append({'dataset': 'Country', 'algorithm': 'FCM', 'error': str(e)})
+
+        print("\nRunning DEKM on Country Data...")
+        try:
+            X_country_tensor = torch.tensor(X_country.copy(), dtype=torch.float32)
+            dekm_labels_country, _, dekm_metrics_country = run_dekm(
+                X_country_tensor, X_country.copy(), k=country_n_clusters, Iter=3,
+                input_dim=country_input_dim, hidden_dim_ae=country_n_clusters, verbose=verbose_run
+            )
+            results.append({'dataset': 'Country', 'algorithm': 'DEKM', **dekm_metrics_country})
+            print("DEKM on Country Data results:", dekm_metrics_country)
+        except Exception as e:
+            print(f"Error running DEKM on Country Data: {e}")
+            results.append({'dataset': 'Country', 'algorithm': 'DEKM', 'error': str(e)})
+            
+        print("\nRunning PFCM on Country Data...")
+        try:
+            _, _, _, _, pfcm_metrics_country = run_pfcm(
+                X_country.copy(), n_clusters=country_n_clusters, verbose=verbose_run
+            )
+            results.append({'dataset': 'Country', 'algorithm': 'PFCM', **pfcm_metrics_country})
+            print("PFCM on Country Data results:", pfcm_metrics_country)
+        except Exception as e:
+            print(f"Error running PFCM on Country Data: {e}")
+            results.append({'dataset': 'Country', 'algorithm': 'PFCM', 'error': str(e)})
+
+        print("\nRunning K-Means (Standalone) on Country Data...")
+        try:
+            _, _, kmeans_metrics_country = run_kmeans_standalone(
+                X_country.copy(), n_clusters=country_n_clusters, verbose=verbose_run
+            )
+            results.append({'dataset': 'Country', 'algorithm': 'KMeans', **kmeans_metrics_country})
+            print("K-Means on Country Data results:", kmeans_metrics_country)
+        except Exception as e:
+            print(f"Error running K-Means on Country Data: {e}")
+            results.append({'dataset': 'Country', 'algorithm': 'KMeans', 'error': str(e)})
+
+        print("\nRunning DBSCAN on Country Data...")
+        try:
+            # Adjust DBSCAN parameters for better clustering
+            _, dbscan_metrics_country = run_dbscan(
+                X_country.copy(), eps=2.0, min_samples=3, verbose=verbose_run  # Adjusted parameters
+            )
+            results.append({'dataset': 'Country', 'algorithm': 'DBSCAN', **dbscan_metrics_country})
+            print("DBSCAN on Country Data results:", dbscan_metrics_country)
+        except Exception as e:
+            print(f"Error running DBSCAN on Country Data: {e}")
+            results.append({'dataset': 'Country', 'algorithm': 'DBSCAN', 'error': str(e)})
+
+        print("\nRunning CFCM on Country Data...")
+        try:
+            if X_country is not None:
+                # Ensure data dimensions match for CFCM
+                X_country_cfcm = X_country.copy()
+                _, _, _, cfcm_metrics_country = run_cfcm(
+                    X_country_cfcm, n_clusters=country_n_clusters, beta=0.5, max_iter=50, verbose=verbose_run
+                )
+                results.append({'dataset': 'Country', 'algorithm': 'CFCM', **cfcm_metrics_country})
+                print("CFCM on Country Data results:", cfcm_metrics_country)
+            else: results.append({'dataset': 'Country', 'algorithm': 'CFCM', 'error': 'Preprocessing failed or input data missing'})
+        except Exception as e:
+            print(f"Error running CFCM on Country Data: {e}")
+            results.append({'dataset': 'Country', 'algorithm': 'CFCM', 'error': str(e)})
+    else:
+        print("Skipping Country dataset processing due to loading error.")
+
     # --- Save results to CSV ---
     if results:
         df_results = pd.DataFrame(results)
@@ -831,6 +982,148 @@ def main():
             print(df_results.to_string())
     else:
         print("\nNo results to save.")
+
+def run_fdekm(X_tensor, X_for_metrics, k=10, Iter=10, input_dim=256, hidden_dim_ae=10, m=2.0, verbose=False):
+    """
+    Fuzzy Deep Embedded K-Means (FDEKM) - Kết hợp DEKM với fuzzy clustering
+    Parameters:
+    - X_tensor: Input data tensor
+    - X_for_metrics: Input data for metrics calculation
+    - k: Number of clusters
+    - Iter: Number of iterations
+    - input_dim: Input dimension
+    - hidden_dim_ae: Hidden dimension of autoencoder
+    - m: Fuzzifier parameter (m > 1)
+    - verbose: Whether to print progress
+    """
+    if X_tensor.shape[0] == 0:
+        print("Error: FDEKM input tensor is empty.")
+        return np.array([]), np.array([]), {}
+    if X_tensor.shape[0] < k:
+        print(f"Warning: FDEKM num_samples ({X_tensor.shape[0]}) < k ({k}). Reducing k.")
+        k = max(1, X_tensor.shape[0])
+
+    model = AutoEncoder_DEKM(input_dim=input_dim, hidden_dim_ae=hidden_dim_ae)
+    train_autoencoder_dekm(model, X_tensor, epochs=20, verbose=verbose)
+
+    H_np_final = None
+    U_final = None
+    V_final = None
+    total_loss_final = torch.tensor(float('nan'))
+
+    for it in range(Iter):
+        model.eval()
+        with torch.no_grad():
+            _, H = model(X_tensor)
+            H_np = H.numpy()
+        
+        if H_np.shape[0] == 0:
+            print(f"FDEKM Iter {it+1}: H_np is empty. Skipping iteration.")
+            continue
+        
+        actual_k = min(k, H_np.shape[0])
+        if actual_k < 1:
+            print(f"FDEKM Iter {it+1}: actual_k is {actual_k}. Skipping iteration.")
+            continue
+
+        # Initialize cluster centers using K-means
+        kmeans = KMeans(n_clusters=actual_k, n_init='auto', random_state=42)
+        try:
+            kmeans.fit(H_np)
+            V = kmeans.cluster_centers_
+        except Exception as e:
+            print(f"FDEKM Iter {it+1}: K-means initialization failed: {e}. Skipping iteration.")
+            continue
+
+        # Initialize membership matrix U
+        U = np.random.rand(H_np.shape[0], actual_k)
+        U = U / np.sum(U, axis=1, keepdims=True)
+
+        # Fuzzy clustering iterations
+        max_fuzzy_iter = 50
+        for fuzzy_iter in range(max_fuzzy_iter):
+            U_old = U.copy()
+            
+            # Update membership matrix U
+            dist = np.zeros((H_np.shape[0], actual_k))
+            for j in range(actual_k):
+                # Reshape V[j] to match H_np dimensions for broadcasting
+                V_j = V[j].reshape(1, -1)  # Shape: (1, n_features)
+                dist[:, j] = np.sum((H_np - V_j)**2, axis=1)
+            
+            # Avoid division by zero
+            dist = np.maximum(dist, 1e-10)
+            
+            # Update U using fuzzy membership formula
+            # Reshape dist for proper broadcasting
+            dist_reshaped = dist.reshape(H_np.shape[0], actual_k, 1)  # Shape: (n_samples, n_clusters, 1)
+            dist_reshaped_t = dist.reshape(H_np.shape[0], 1, actual_k)  # Shape: (n_samples, 1, n_clusters)
+            U = 1.0 / np.sum((dist_reshaped / dist_reshaped_t)**(2/(m-1)), axis=2)
+            
+            # Update cluster centers V
+            for j in range(actual_k):
+                # Reshape U[:, j] for proper broadcasting
+                U_j = U[:, j].reshape(-1, 1)  # Shape: (n_samples, 1)
+                V[j] = np.sum(U_j**m * H_np, axis=0) / np.sum(U_j**m)
+
+            # Check convergence
+            if np.max(np.abs(U - U_old)) < 1e-4:
+                if verbose:
+                    print(f"FDEKM fuzzy clustering converged at iteration {fuzzy_iter+1}")
+                break
+
+        # Update autoencoder with fuzzy constraints
+        V_tensor = torch.tensor(V, dtype=torch.float32)
+        optimizer = optim.Adam(model.parameters(), lr=1e-3)
+        lambda_reg = 0.1
+
+        for epoch_refine in range(10):
+            model.train()
+            optimizer.zero_grad()
+            out, H_refined = model(X_tensor)
+            
+            # Reconstruction loss
+            loss_recon = nn.MSELoss()(out, X_tensor)
+            
+            # Fuzzy clustering loss
+            H_np_refined = H_refined.detach().numpy()
+            dist_refined = np.zeros((H_np_refined.shape[0], actual_k))
+            for j in range(actual_k):
+                # Reshape V[j] for proper broadcasting
+                V_j = V[j].reshape(1, -1)  # Shape: (1, n_features)
+                dist_refined[:, j] = np.sum((H_np_refined - V_j)**2, axis=1)
+            
+            # Reshape dist_refined for proper broadcasting
+            dist_refined_reshaped = dist_refined.reshape(H_np_refined.shape[0], actual_k, 1)
+            dist_refined_reshaped_t = dist_refined.reshape(H_np_refined.shape[0], 1, actual_k)
+            U_refined = 1.0 / np.sum((dist_refined_reshaped / dist_refined_reshaped_t)**(2/(m-1)), axis=2)
+            
+            loss_fuzzy = torch.tensor(np.sum(U_refined**m * dist_refined))
+            
+            # Total loss
+            total_loss = loss_recon + lambda_reg * loss_fuzzy
+            total_loss.backward()
+            optimizer.step()
+
+        H_np_final = H_np
+        U_final = U
+        V_final = V
+        total_loss_final = total_loss
+
+        if verbose:
+            print(f"FDEKM Iteration {it+1}/{Iter}, Loss: {total_loss_final.item():.4f}")
+
+    metrics = {}
+    if U_final is not None and H_np_final is not None and H_np_final.shape[0] > 0:
+        labels = np.argmax(U_final, axis=1)
+        metrics = calculate_sklearn_metrics(H_np_final, labels)
+        if H_np_final.shape[0] > 1 and len(np.unique(labels)) > 1:
+            metrics.update(calculate_custom_metrics(H_np_final, U_final, V_final, m=m))
+    else:
+        labels = np.array([])
+        H_np_final = np.array([])
+        
+    return labels, H_np_final, metrics
 
 if __name__ == '__main__':
     main() 
