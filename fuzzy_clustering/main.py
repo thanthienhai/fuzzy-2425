@@ -7,11 +7,12 @@ algorithms on different datasets and collecting evaluation results.
 
 import os
 import pandas as pd
+import torch
 from .data import load_usps_data, load_ecommerce_data, load_country_data
 from .data import preprocess_usps_for_dekm, preprocess_usps_for_pfcm
 from .algorithms import (
     run_dekm, run_pfcm, run_fcm, run_kmeans_standalone, 
-    run_dbscan, run_cfcm, run_fdekm
+    run_dbscan, run_cfcm, run_fdekm, run_afdekm
 )
 from .metrics.fuzzy_metrics import pci_index, fhv_index, xbi_index
 
@@ -170,6 +171,23 @@ def run_algorithms_on_usps(base_path='.', verbose=True):
             print(f"Error running FDEKM on USPS: {e}")
             results.append({'dataset': 'USPS', 'algorithm': 'FDEKM', 'error': str(e)})
 
+        # A-FDEKM on USPS (new algorithm)
+        print("\nRunning A-FDEKM on USPS...")
+        try:
+            if X_usps_tensor is not None:
+                _, _, _, _, _, afdekm_metrics_usps = run_afdekm(
+                    X_usps_tensor, X_usps_scaled_np, k=usps_n_clusters, Iter=30,
+                    input_dim=usps_input_dim, hidden_dim_ae=usps_n_clusters, 
+                    m=2.0, gamma=0.1, alpha=0.01, pretrain_epochs=30, verbose=verbose
+                )
+                results.append({'dataset': 'USPS', 'algorithm': 'A-FDEKM', **afdekm_metrics_usps})
+                print("A-FDEKM on USPS results:", afdekm_metrics_usps)
+            else:
+                results.append({'dataset': 'USPS', 'algorithm': 'A-FDEKM', 'error': 'Preprocessing failed'})
+        except Exception as e:
+            print(f"Error running A-FDEKM on USPS: {e}")
+            results.append({'dataset': 'USPS', 'algorithm': 'A-FDEKM', 'error': str(e)})
+
     else:
         print("USPS dataset could not be loaded. Skipping USPS experiments.")
     
@@ -199,7 +217,10 @@ def run_algorithms_on_ecommerce(base_path='.', verbose=True):
         algorithms_to_run = [
             ('FCM', lambda: run_fcm(X_ecommerce, n_clusters=ecommerce_n_clusters, verbose=verbose)),
             ('KMeans', lambda: run_kmeans_standalone(X_ecommerce, n_clusters=ecommerce_n_clusters, verbose=verbose)),
-            ('DBSCAN', lambda: run_dbscan(X_ecommerce, eps=0.5, min_samples=5, verbose=verbose))
+            ('DBSCAN', lambda: run_dbscan(X_ecommerce, eps=0.5, min_samples=5, verbose=verbose)),
+            ('A-FDEKM', lambda: run_afdekm(torch.tensor(X_ecommerce, dtype=torch.float32), X_ecommerce, 
+                                         k=ecommerce_n_clusters, Iter=20, m=2.0, gamma=0.1, alpha=0.01, 
+                                         pretrain_epochs=20, verbose=verbose))
         ]
 
         for algo_name, algo_func in algorithms_to_run:
@@ -245,7 +266,10 @@ def run_algorithms_on_country(base_path='.', verbose=True):
         algorithms_to_run = [
             ('FCM', lambda: run_fcm(X_country, n_clusters=country_n_clusters, verbose=verbose)),
             ('KMeans', lambda: run_kmeans_standalone(X_country, n_clusters=country_n_clusters, verbose=verbose)),
-            ('DBSCAN', lambda: run_dbscan(X_country, eps=1.0, min_samples=3, verbose=verbose))
+            ('DBSCAN', lambda: run_dbscan(X_country, eps=1.0, min_samples=3, verbose=verbose)),
+            ('A-FDEKM', lambda: run_afdekm(torch.tensor(X_country, dtype=torch.float32), X_country,
+                                         k=country_n_clusters, Iter=20, m=2.0, gamma=0.1, alpha=0.01,
+                                         pretrain_epochs=20, verbose=verbose))
         ]
 
         for algo_name, algo_func in algorithms_to_run:
